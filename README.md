@@ -1,4 +1,4 @@
-## WebscrapingProject_VideogameReviews
+## Webscraping Project: Metacritic VideogameReviews using Scrapy
 
 Scraping and analysis of videogame reviews from 1995-2020 from Metacritic.com using Scrapy.
 
