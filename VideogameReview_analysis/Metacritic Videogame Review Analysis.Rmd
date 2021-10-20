@@ -1,0 +1,566 @@
+---
+title: "Webscraping Project - Analysising Metacritic Videogame Reviews"
+author: "Jeremy Osir"
+date: "10/4/2021"
+output: html_document
+---
+
+#### Next steps: Clean up Chunk Outputs; Knit; Presentation!
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Introduction
+
+Context on videogame industry - cite rapid growth; increasing dominance of pop culture
+Quick personal note for conducting research
+Project research questions for consumers (gamers) and developers
+
+## 1. Data Preprocessing ####
+
+### 1.1 Load libraries
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(skimr)
+library(data.table)
+library(formattable)
+```
+
+### 1.2 Load dataset
+```{r load_data, cache=TRUE, warning=FALSE, message=FALSE}
+
+game.reviews <- read.csv("./metacritic_VGreviews.csv") 
+
+```
+
+### 1.3 Clean data
+
+```{r preprocessing}
+# Review summary information about the game reviews dataframe
+skim(game.reviews) 
+  # 17K observations with 20 variables/features
+  # there are no missing values in the 11 character columns
+  # numeric columns have missing values, but those seem to be bc reviews are stored in different fields
+
+
+#### Pre-Processing Steps ####
+# 1. Convert "release date" column from character to date
+game.reviews.df <- game.reviews %>% 
+  mutate(., release_date = mdy(release_date)) # Dates in format: "Month - Day - Year"
+
+sapply(game.reviews.df, class) # check variable classes
+
+
+# 2. Create new column that extracts the year from release_date
+game.reviews.df <- game.reviews.df %>% 
+  mutate(., release_year = year(release_date))
+  
+# 3. The critic and user review scores are stored in different columns based on whether they are positive, mixed, or negative. Create ONE column to store all the critic reviews
+game.reviews.df <-game.reviews.df %>% 
+  mutate(., critic_score = case_when(
+    is.na(critic_score_pos) & is.na(critic_score_mix) ~ critic_score_neg,
+    is.na(critic_score_neg) & is.na(critic_score_pos) ~ critic_score_mix,
+    is.na(critic_score_mix) & is.na(critic_score_neg) ~ critic_score_pos,
+    TRUE ~ critic_score_pos
+  ))
+
+  # Two games do not have any critic reviews (Kalypso and Eggtooth Team). Exclude them from the dataset
+game.reviews.df <-  game.reviews.df %>% 
+  filter(., !is.na(critic_score))
+
+# Next, repeat the same process for the user review columns
+game.reviews.df <- game.reviews.df %>% 
+  mutate(., user_score = case_when(
+    is.na(user_score_pos) & is.na(user_score_mix) ~ user_score_neg,
+    is.na(user_score_neg) & is.na(user_score_pos) ~ user_score_mix,
+    is.na(user_score_mix) & is.na(user_score_neg) ~ user_score_pos,
+    TRUE ~ user_score_pos
+  ))
+
+# The critic scores are given on a 1-100 scale, while the user scores are 1-10 (to 1 decimal place)
+# Scale the critic-score by 0.1 so that it matches the user score format
+game.reviews.df <- game.reviews.df %>%
+  mutate(critic_score_scaled = critic_score/10)
+
+## Genres are all stored in one column. Let's split them into seperate columns
+
+  # Check the maximum no. of genres that a single game in the dataset has
+max(lengths(strsplit(game.reviews.df$genres, ','))) # 12 genres
+
+# Use 'str_split_fixed' function to split each genre in the genres column into individual columns
+  # NOTE: since there are duplicate genres, let's plan to remove dupes after making the df longer
+genre.columns <- str_split_fixed(game.reviews.df$genres, ",", 12)
+
+# combine the genre
+reviews.genres <- cbind(game.reviews.df, genre.columns)
+
+# gather the dataframe and make it long
+genres.long <- pivot_longer(reviews.genres, 
+                            cols = "1":"12", names_to = "genre.ID", values_to = "genre.value")
+
+# Each title's genres are captured in a separate row. 
+# Remove any rows that have an empty genre.value and/or a duplicated value
+genres.long <- genres.long %>% 
+  filter(., !genre.value == "")
+
+
+reviews.genres.long <- genres.long %>% 
+  distinct(., title, platform, genre.value, .keep_all = TRUE)
+
+
+```
+
+## 2. Data Visualization ####
+### Questions we want to answer from this dataset
+
+- How do user scores compare to critic scores - overall? IS there a correlation?
+- How have user & critic reviews trended over time? 
+- Which platforms have the highest reviews, on average according to 1) critics, 2) users?
+- Which platform has the most games ranked in the top 100? Bottom 100?
+- Which videogame genres scored highest in the eyes of 1) critics, 2) users?
+- Which videogames are in the Hall of Fame? Which are in the the Hall of Shame?
+- Do my favorite games perform better or worse in than the rest of the games?
+
+
+### 2.1 Inspection: Compare distribution of user scores vs critic scores? Is there a correlation?
+``` {r }
+# Create some charts to explore the distribution  data
+  # User score frequency plot
+user.reviews.distr <-game.reviews.df %>% 
+  ggplot(data = ., aes(x = user_score)) +
+  geom_bar(position = "dodge", fill = "blue") +
+  labs(title = "Distribution of Users' Videogame Review Scores",
+       x= "User Review Score", y = "Frequency")+
+  theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+        legend.position = "none")
+
+user.reviews.distr
+
+  # Critic score frequency plot
+critic.reviews.distr <- game.reviews.df %>% 
+  ggplot(., aes(x = critic_score_scaled, fill = "red")) +
+  geom_bar(position = "dodge")+
+  labs(title = "Distribution of Critics' Videogame Review Scores",
+       x= "Critic Review Score", y = "Frequency") +
+  theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+        legend.position = "none")
+critic.reviews.distr
+
+  # Overlap critic and user score distribution on one chart
+
+# Let's observe density plots for the user and critic reviews
+game.reviews.distr <- game.reviews.df %>% 
+  pivot_longer(., cols = c(user_score, critic_score_scaled), names_to = "review_type", values_to = "review_score") %>% 
+  ggplot(., aes(x = review_score, fill = review_type))+
+  geom_density(alpha = 0.6) +
+  labs(title = "Distribution of Videogame Review Scores\n Users vs Critics",
+       x = "Review Score",
+       fill = "Review Type")+
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))+
+  scale_fill_discrete(labels = c("Critic Score", "User Score"))
+game.reviews.distr
+
+# Correlation between user and critic scores ####
+scatter.user.critic.reviews <- game.reviews.df %>% 
+  ggplot(., aes(x = critic_score_scaled, y = user_score))+
+  labs(title = "Video Game Reviews: Critic Scores vs User Scores", x= "Critic Review Score", y = "User Review Score") +
+  geom_point(size = 0.6, color = "red")+
+  geom_smooth(method = "lm") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+scatter.user.critic.reviews
+
+
+
+
+# Check correlation between critic score and user score
+cor.test(game.reviews.df$critic_score_scaled, game.reviews.df$user_score, method = "pearson", conf.level = 0.95)
+  # Pearson's correlation test indicates user and critic scores have a correlation = 0.53, and is statistically significant
+  # Takeaway: User and Critic Scores are moderately positively correlated, with scores generally following the same pattern
+
+
+
+
+```
+### 2.2 Inspection: Examine how the average review scores given by users and critics has changed over time.
+  Check whether the difference in review scores has got larger or smaller.
+```{r}
+
+# Title Reviews by Year - comparing critic scores vs user scores ####
+users.critics.annual <- game.reviews.df %>% 
+  group_by(.,release_year) %>% 
+  filter(., !release_year == 2021) %>% 
+  summarise(., avg.annual.critic.score = mean(critic_score_scaled),
+            avg.annual.user.score = mean(user_score)) %>% 
+  mutate(., score.difference = abs(avg.annual.critic.score - avg.annual.user.score))
+
+user.critics.annual.chart <- users.critics.annual %>%
+  pivot_longer(., cols = !c(release_year,score.difference), names_to = 'review_type', values_to = "review_score") %>% 
+  ggplot(., aes(x = release_year, y = review_score, color = review_type))+
+  geom_line() +
+  labs(title = "Metacritic Videogame Review Scores by Release Year\n Users vs Critics: 1995 - 2020",
+       x= "Release Year", y = "Review Score",
+       color = "Review Type") +
+  scale_color_hue(labels = c("Average Critic Score", "Average User Score")) +
+  theme(axis.text.x = element_text(size = 10), axis.title.x = element_text(size = 12),
+        axis.text.y = element_text(size = 10), axis.title.y = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+user.critics.annual.chart
+
+# Let's look at how much the scores have diverged over time
+user.critics.score.diff <- users.critics.annual %>% 
+  ggplot(., aes(x = release_year, y = score.difference))+
+  geom_line() +
+  labs(title = "Difference between average critic and user scores each year\n 1995-2020",
+       x= "Release Year", y = "Difference") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+user.critics.score.diff
+
+
+
+# Title Reviews by Decade ####
+title.reviews.decade <- game.reviews.df %>% 
+  filter(., !release_year == 2021) %>% 
+  mutate(., release_decade = case_when(
+    release_year %in% c(1990,1991,1992,1993,1994,1995,1996,1997,1998,1999) ~ "1990s",
+    release_year %in% c(2000,2001,2002,2003,2004,2005,2006,2007,2008,2009) ~ "2000s",
+    release_year %in% c(2010,2011,2012,2013,2014,2015,2016,2017,2018,2019) ~ "2010s",
+    TRUE ~ "2020s")) %>% 
+  group_by(., release_decade) %>% 
+  summarise(., avg.annual.critic.score = mean(critic_score_scaled),
+            avg.annual.user.score = mean(user_score)) %>% 
+  pivot_longer(., cols = !release_decade, names_to = 'review_type', values_to = "review_score") 
+
+
+title.reviews.decade.chart <- title.reviews.decade %>%
+  ggplot(., aes(x = release_decade, y = review_score, fill= review_type, group = review_type))+
+  geom_col(position = "dodge") +
+  labs(title = "Metacritic Videogame Review Scores by Release Decade\n Users vs Critics",
+       x= "Decade", y = "Average Review Score",
+       color = "Review Type") +
+  scale_color_hue(labels = c("Average Critic Score", "Average User Score")) +
+  theme(axis.text.x = element_text(size = 10), axis.title.x = element_text(size = 12),
+        axis.text.y = element_text(size = 10), axis.title.y = element_text(size = 12),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+title.reviews.decade.chart
+
+# On average, user review scores have gone down over time.
+# The 90s have the highest reviews by users and critics. (Partially due to fewer games being released)
+# The average review scores dropped by almost 1- 1.5pts in the 2000s.
+# By the 2010s, we start seeing more divergence between critics and users, with users being more critical.
+
+
+
+
+
+
+
+
+```
+
+## 2.3. Inspection: How has the number of user & critics providing reviews changed over time? 
+
+```{r}
+# How have number of user provided reviews trended over time? 
+user.reviews.freq <- game.reviews.df %>%
+  group_by(., release_year) %>% 
+  filter(., !release_year == 2021) %>% 
+  summarise(., total_num_user_reviews = sum(num_user_reviews)) %>% 
+  ggplot(., aes(x = release_year, y = total_num_user_reviews))+
+  geom_col() +
+  labs(title = "Number of Videogame Review Scores given by Users\n 1995-2020",
+       x= "User Review Scores", y = "Number of User Reviews") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+user.reviews.freq
+
+# Over time, the number of user reviews has risen sharply (to be expected)
+# User reviews also dwarf critic reviews (400K user reviews in 2020 compared to 20K critic reviews)
+
+critic.reviews.freq <- game.reviews.df %>%
+  group_by(., release_year) %>% 
+  filter(., !release_year == 2021) %>% 
+  summarise(., total_num_critic_reviews = sum(num_critic_reviews)) %>% 
+  ggplot(., aes(x = release_year, y = total_num_critic_reviews))+
+  geom_col()+
+  labs(title = "Distribution of Videogame Review Scores given by Critics each year\n
+       1995-2020",
+       x= "Critic Review Scores", y = "Number of Critic Reviews") +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+critic.reviews.freq
+
+
+
+
+
+
+
+```
+
+## 2.4 Inspection: 
+  - Which platforms have the highest reviews, on average according to 1) critics, 2) users?
+  - Which platform has the most games ranked in the top 100? Bottom 100?
+
+```{r}
+
+# Platform Reviews ####
+platform.reviews <- game.reviews.df %>% 
+  group_by(., platform) %>% 
+  summarise(., avg.annual.critic.score = mean(critic_score_scaled),
+            avg.annual.user.score = mean(user_score)) %>% 
+  pivot_longer(., cols = !platform, names_to = "review_type", values_to = "review_score")
+
+  # Platform with highest reviews according to Critics
+platform.critic.reviews.chart <- platform.reviews %>%
+  filter(., review_type == "avg.annual.critic.score") %>% 
+  ggplot(., aes(x = reorder(platform, review_score), y =review_score, fill = platform))+
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = round(review_score,2), hjust = 1.2, size = 1, face = "bold")) +
+  labs(title = "Average Critic Review Scores for each Platform",
+    subtitle = "Scores out of 10",
+    x= "Platform", 
+    y = "Average Critic Review Score") +
+  scale_fill_discrete() +
+  theme(axis.text.x = element_text(size = 10), axis.title.x = element_text(size = 12),
+        axis.text.y = element_text(size = 10, face = "bold"), axis.title.y = element_text(size = 12),
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5,),
+        plot.subtitle = element_text(hjust = 0.5),
+        legend.position = "none") +
+  coord_flip()
+  # geom_hline(yintercept = mean(game.reviews.df$critic_score_scaled, 
+  #                               linetype = "dashed", color = "purple", size = 1.1))
+
+platform.critic.reviews.chart
+
+  # User Reviews
+platform.user.reviews.chart <- platform.reviews %>%
+  filter(., review_type == "avg.annual.user.score") %>% 
+  ggplot(., aes(x = reorder(platform, review_score), y = review_score, fill = platform))+
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = round(review_score,2), hjust = 1.2, size = 0.7, face = "bold")) +
+  labs(
+    title = "Average User Review Scores for each Platform",
+    subtitle = "Scores out of 10",
+    x= "Platform", 
+    y = "Average User Review Score") +
+  scale_fill_discrete() +
+  theme(axis.text.x = element_text(size = 10), axis.title.x = element_text(size = 12),
+        axis.text.y = element_text(size = 10, face = "bold"), axis.title.y = element_text(size = 12),
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5,),
+        plot.subtitle = element_text(hjust = 0.5),
+        legend.position = "none")+
+  coord_flip()
+  #geom_hline(yintercept = mean(game.reviews.df$user_score, 
+                               #linetype = "dashed", color = "purple", size = 1.1))
+
+platform.user.reviews.chart
+
+
+```
+
+```{r}
+
+# Developer Reviews ####
+developer.reviews <- game.reviews.df %>% 
+  group_by(., developer) %>% 
+  summarise(., 
+            avg.annual.critic.score = mean(critic_score_scaled),
+            avg.annual.user.score = mean(user_score),
+            num.games.developed = n()) %>% 
+  pivot_longer(., cols = !c(developer, num.games.developed), names_to = "review_type", values_to = "review_score")
+
+  # Developers with highest reviews according to Critics (>5 games)
+developer.critic.reviews.chart <- developer.reviews %>%
+  filter(., review_type == "avg.annual.critic.score", num.games.developed > 5) %>% 
+  slice_max(., n= 10, order_by = review_score) %>% 
+  ggplot(., aes(x = reorder(developer, review_score), y =review_score, fill = developer))+
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = round(review_score,2), hjust = 1.2, size = 0.6, face = "bold")) +
+  labs(
+    title = "Highest Rated Game Developers according to Critics",
+    subtitle = "Minimum 5 games developed",
+    x= "Developer", 
+    y = "Average Critic Score out of 10") +
+  scale_fill_discrete() +
+  theme(axis.text.x = element_text(size = 11), axis.title.x = element_text(size = 12),
+        axis.text.y = element_text(size = 10, face = "bold"), axis.title.y = element_text(size = 12),
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5,),
+        plot.subtitle = element_text(hjust = 0.5),
+        legend.position = "none") +
+  coord_flip()
+  # geom_hline(yintercept = mean(game.reviews.df$critic_score_scaled, 
+  #                               linetype = "dashed", color = "purple", size = 1.1))
+
+
+  # User Reviews
+developer.user.reviews.chart <- developer.reviews %>%
+  filter(., review_type == "avg.annual.user.score", num.games.developed > 5) %>% 
+  slice_max(., n= 10, order_by = review_score) %>% 
+  ggplot(., aes(x = reorder(developer, review_score), y = review_score, fill = developer)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = round(review_score,2), hjust = 1.2, size = 0.6, face = "bold")) +
+  labs(
+    title = "Highest Rated Game Developers according to Users",
+    subtitle = " Minimum 5 games developed",
+    x= "Developer", 
+    y = "Average User Score out of 10") +
+  scale_fill_discrete() +
+  theme(axis.text.x = element_text(size = 11), axis.title.x = element_text(size = 12),
+        axis.text.y = element_text(size = 10, face = "bold"), axis.title.y = element_text(size = 12),
+        plot.title = element_text(size = 14, face = "bold", hjust = 0.5,),
+        plot.subtitle = element_text(hjust = 0.5),
+        legend.position = "none")+
+  coord_flip() 
+  
+  #geom_hline(yintercept = mean(game.reviews.df$user_score, 
+                               #linetype = "dashed", color = "purple", size = 1.1))
+
+developer.critic.reviews.chart
+developer.user.reviews.chart
+
+
+```
+
+
+
+
+
+
+
+## 2.5 Inspection: Genres
+- top reviewed genres, users vs critics
+- chart showing freq of genre vs score
+
+```{r}
+
+# Create a dataframe showing the number of genres that each title is associated with
+count.genres.per.game <- genres.long %>% 
+  filter(., !genre.value == " ") %>% 
+  group_by(., platform, title) %>%
+  summarize(num_genres = n())
+
+count.genres.per.game
+
+
+
+# Table showing genre reviews
+all.genre.reviews <- genres.long %>% 
+  rename(., "Genre" = genre.value) %>% 
+  group_by(., Genre) %>% 
+  summarise(., 
+            'Frequency' = n(),
+            'Average Critic Score' = round(mean(critic_score_scaled), 2),
+            'Average User Score' = round(mean(user_score),2))
+
+# Chart showing frquency against average review
+ggplot(all.genre.reviews, aes(x = `Frequency`, y = `Average Critic Score`))+
+  geom_point()
+
+
+# Table showing Genres with the highest Critic Reviews (minimum = 1000 games)
+top.critic.genres.1000 <- all.genre.reviews %>% 
+  filter(., Frequency > 1000) %>% 
+  slice_max(., n=5, order_by =`Average Critic Score`) %>% 
+  select(., !('Average User Score'))
+
+# Table showing Genres with the highest Critic Reviews (minimum = 100 games)
+top.critic.genres.100 <-all.genre.reviews %>% 
+  filter(., Frequency > 1000) %>% 
+  slice_max(., n=5, order_by =`Average Critic Score`) %>% 
+  select(., !('Average User Score')) 
+
+# Table showing Genres with the highest User Reviews (minimum = 1000 games)
+top.user.genres.1000 <- all.genre.reviews %>% 
+  filter(., Frequency > 1000) %>% 
+  slice_min(., n=5, order_by =`Average User Score`) %>% 
+  select(., !('Average Critic Score')) 
+
+# Table showing Genres with the highest User Reviews (minimum = 100 games)
+top.user.genres.100 <-all.genre.reviews %>% 
+  filter(., Frequency > 1000) %>% 
+  slice_min(., n=5, order_by =`Average User Score`) %>% 
+  select(., !('Average Critic Score')) 
+
+# Format tables
+
+top.critic.genres.1000 <- formattable(top.critic.genres.1000,
+                                      align = c("l", "c", "c"))
+
+top.critic.genres.100 <- formattable(top.critic.genres.100,
+                                      align = c("l", "c", "c"))
+
+top.user.genres.1000 <- formattable(top.user.genres.1000,
+                                      align = c("l", "c", "c"))
+
+top.user.genres.100 <- formattable(top.user.genres.100,
+                                   align = c("l", "c", "c"))
+
+
+
+```
+
+
+##2.6 Inspection: Hall of Fame 
+- top 5 platforms and top 5 games according to users and critics
+
+```{r}
+  # Which were the Top 10 highest reviewed games by Critics?
+top10.critic.games  <- game.reviews.df %>%
+  slice_min(., n=10, order_by = rank) %>% 
+  select(., c(title, critic_score_scaled, platform, release_year))
+
+top10.critic.games.tbl <- formattable(top10.critic.games,
+                                   align = c("l", "c", "c"))
+top10.critic.games.tbl
+
+  # Which were the Top 10 highest reviewed games by Users (min = 1000 reviews)?
+top10.user.games  <- game.reviews.df %>%
+  filter(., num_user_reviews > 1000) %>% 
+  slice_max(., n=10, order_by = user_score) %>% 
+  select(., c(title, user_score, platform, release_year))
+
+top10.user.games.tbl <- formattable(top10.user.games,
+                                   align = c("l", "c", "c"))
+
+
+library(magrittr)
+library(knitr)
+# #top10.user.games.tbl <- knitr::kable(top10.user.games,
+#   caption = "Hall of Fame: Top 10 Games according to Users\n\n",
+#   align ="lccc")
+
+top10.user.games.tbl
+top10.critic.games.tbl
+
+
+```
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
