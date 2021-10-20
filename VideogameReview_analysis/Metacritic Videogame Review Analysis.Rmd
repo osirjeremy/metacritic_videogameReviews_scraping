@@ -11,13 +11,6 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
-## Introduction
-
-Context on videogame industry - cite rapid growth; increasing dominance of pop culture
-Quick personal note for conducting research
-Project research questions for consumers (gamers) and developers
-
 ## 1. Data Preprocessing ####
 
 ### 1.1 Load libraries
@@ -118,9 +111,9 @@ reviews.genres.long <- genres.long %>%
 ```
 
 ## 2. Data Visualization ####
-### Questions we want to answer from this dataset
+### Questions we want to investigate in this dataset
 
-- How do user scores compare to critic scores - overall? IS there a correlation?
+- How do user scores compare to critic scores - overall? Is there a correlation?
 - How have user & critic reviews trended over time? 
 - Which platforms have the highest reviews, on average according to 1) critics, 2) users?
 - Which platform has the most games ranked in the top 100? Bottom 100?
@@ -188,6 +181,7 @@ cor.test(game.reviews.df$critic_score_scaled, game.reviews.df$user_score, method
 
 
 ```
+
 ### 2.2 Inspection: Examine how the average review scores given by users and critics has changed over time.
   Check whether the difference in review scores has got larger or smaller.
 ```{r}
@@ -261,10 +255,6 @@ title.reviews.decade.chart
 
 
 
-
-
-
-
 ```
 
 ## 2.3. Inspection: How has the number of user & critics providing reviews changed over time? 
@@ -282,8 +272,6 @@ user.reviews.freq <- game.reviews.df %>%
   theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
 user.reviews.freq
 
-# Over time, the number of user reviews has risen sharply (to be expected)
-# User reviews also dwarf critic reviews (400K user reviews in 2020 compared to 20K critic reviews)
 
 critic.reviews.freq <- game.reviews.df %>%
   group_by(., release_year) %>% 
@@ -299,10 +287,8 @@ critic.reviews.freq <- game.reviews.df %>%
 critic.reviews.freq
 
 
-
-
-
-
+# Over time, the number of user reviews has risen sharply (to be expected)
+# User reviews also dwarf critic reviews (400K user reviews in 2020 compared to 20K critic reviews)
 
 ```
 
@@ -431,11 +417,6 @@ developer.user.reviews.chart
 ```
 
 
-
-
-
-
-
 ## 2.5 Inspection: Genres
 - top reviewed genres, users vs critics
 - chart showing freq of genre vs score
@@ -531,36 +512,8 @@ top10.user.games  <- game.reviews.df %>%
 top10.user.games.tbl <- formattable(top10.user.games,
                                    align = c("l", "c", "c"))
 
-
-library(magrittr)
-library(knitr)
-# #top10.user.games.tbl <- knitr::kable(top10.user.games,
-#   caption = "Hall of Fame: Top 10 Games according to Users\n\n",
-#   align ="lccc")
-
 top10.user.games.tbl
 top10.critic.games.tbl
 
 
 ```
-
-
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
